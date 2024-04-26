@@ -14,7 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"sync"
+	//"sync"
 	"syscall"
 	"time"
 
@@ -607,9 +607,9 @@ func GenerateProducts() []Product {
 	var products []Product
 	for i := 0; i < 100; i++ {
 		products = append(products, Product{
-			Name:  "Sample Product",
-			Size:  "M",
-			Price: 50.0,
+			Name:  "golang",
+			Size:  "s",
+			Price: 55.0,
 		})
 	}
 	return products
@@ -621,34 +621,135 @@ func AddProductPostHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Генерируем 1000 товаров
-    products := GenerateProducts()
-
-    // Создаем счетчик для отслеживания завершения горутин
-    var wg sync.WaitGroup
-    wg.Add(len(products))
-
-    // Вставляем каждый товар в базу данных с использованием горутин
-    for _, product := range products {
-        go func(p Product) {
-            defer wg.Done() // Уменьшаем счетчик при завершении горутины
-            _, err := db.Exec("INSERT INTO products (name, size, price) VALUES ($1, $2, $3)", p.Name, p.Size, p.Price)
-            if err != nil {
-                fmt.Println("Error inserting into database:", err)
-                // В случае ошибки вы можете здесь добавить логгирование или обработку ошибки
-                return
-            }
-            fmt.Printf("New product added: Name=%s, Size=%s, Price=%.2f\n", p.Name, p.Size, p.Price)
-        }(product)
+    // Разбор формы и получение данных о товаре
+    name := r.FormValue("name")
+    size := r.FormValue("size")
+    price, err := strconv.ParseFloat(r.FormValue("price"), 64)
+    if err != nil {
+        http.Error(w, "Invalid price", http.StatusBadRequest)
+        return
     }
 
-    // Дожидаемся завершения всех горутин
-    wg.Wait()
+    // Создание канала для синхронизации завершения горутин
+    done := make(chan struct{})
+    defer close(done)
 
-    // Перенаправление на страницу администратора после добавления товаров
+    // Создание канала для передачи ошибок из горутин в основной поток
+    errCh := make(chan error, 1)
+
+    // Запуск горутины для каждого товара
+    go func() {
+        // Логика записи товара в базу данных
+        _, err := db.Exec("INSERT INTO products (name, size, price) VALUES ($1, $2, $3)", name, size, price)
+        if err != nil {
+            errCh <- err // Отправляем ошибку в канал ошибок
+            return
+        }
+
+        // Отправляем сигнал об успешном завершении горутины
+        done <- struct{}{}
+    }()
+
+    // Ожидание завершения всех горутин
+    for i := 0; i < 1; i++ {
+        select {
+        case <-done:
+            // Горутина успешно завершилась
+        case err := <-errCh:
+            // Произошла ошибка в горутине
+            http.Error(w, fmt.Sprintf("Error inserting into database: %v", err), http.StatusInternalServerError)
+            return
+        }
+    }
+
+    // Перенаправление на страницу администратора после добавления товара
     http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
+func AddProductsWithConcurrency(numGoroutines int) {
+    startTime := time.Now()
 
+    // Создание канала для синхронизации завершения горутин
+    done := make(chan struct{})
+    defer close(done)
+
+    // Создание канала для передачи ошибок из горутин в основной поток
+    errCh := make(chan error, numGoroutines)
+
+    // Запуск горутин для каждого товара
+    for i := 0; i < numGoroutines; i++ {
+        go func() {
+            // Логика записи товара в базу данных
+            // Здесь вы можете использовать вашу текущую логику записи товара
+            // Пример:
+            _, err := db.Exec("INSERT INTO products (name, size, price) VALUES ($1, $2, $3)", "Sample Product", "M", 50.0)
+            if err != nil {
+                errCh <- err // Отправляем ошибку в канал ошибок
+                return
+            }
+
+            // Отправляем сигнал об успешном завершении горутины
+            done <- struct{}{}
+        }()
+    }
+
+    // Ожидание завершения всех горутин
+    for i := 0; i < numGoroutines; i++ {
+        select {
+        case <-done:
+            // Горутина успешно завершилась
+        case err := <-errCh:
+            // Произошла ошибка в горутине
+            fmt.Printf("Error in goroutine: %v\n", err)
+            return
+        }
+    }
+
+    // Вывод времени затраченного на выполнение всех горутин
+    fmt.Printf("Time taken for %d goroutines: %s\n", numGoroutines, time.Since(startTime))
+}
+
+func AddProducts(numGoroutines int) {
+    startTime := time.Now()
+
+    // Создание канала для синхронизации завершения горутин
+    done := make(chan struct{})
+    defer close(done)
+
+    // Создание канала для передачи ошибок из горутин в основной поток
+    errCh := make(chan error, numGoroutines)
+
+    // Запуск горутин для каждого товара
+    for i := 0; i < numGoroutines; i++ {
+        go func() {
+            // Логика записи товара в базу данных
+            // Здесь вы можете использовать вашу текущую логику записи товара
+            // Пример:
+            _, err := db.Exec("INSERT INTO products (name, size, price) VALUES ($1, $2, $3)", "Sample Product", "M", 50.0)
+            if err != nil {
+                errCh <- err // Отправляем ошибку в канал ошибок
+                return
+            }
+
+            // Отправляем сигнал об успешном завершении горутины
+            done <- struct{}{}
+        }()
+    }
+
+    // Ожидание завершения всех горутин
+    for i := 0; i < numGoroutines; i++ {
+        select {
+        case <-done:
+            // Горутина успешно завершилась
+        case err := <-errCh:
+            // Произошла ошибка в горутине
+            fmt.Printf("Error in goroutine: %v\n", err)
+            return
+        }
+    }
+
+    // Вывод времени затраченного на выполнение всех горутин
+    fmt.Printf("Time taken for %d goroutines: %s\n", numGoroutines, time.Since(startTime))
+}
 
 
 func EditProductHandler(w http.ResponseWriter, r *http.Request) {
@@ -778,4 +879,19 @@ func main() {
 	}
 
 	log.Info("Server has stopped")
+	addProductsWithDuration(1, "1 горутина")
+    addProductsWithDuration(10, "10 горутин")
+    addProductsWithDuration(20, "20 горутин")
+    addProductsWithDuration(50, "50 горутин")
+    addProductsWithDuration(100, "100 горутин")
+}
+
+func addProductsWithDuration(numGoroutines int, description string) {
+    fmt.Printf("%s: ", description)
+    startTime := time.Now()
+
+    // Логика добавления товаров с заданным количеством горутин
+    AddProducts(numGoroutines)
+
+    fmt.Printf("Время выполнения: %s\n", time.Since(startTime))
 }
